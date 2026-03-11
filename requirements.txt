@@ -1,0 +1,5 @@
+# Pi-hole agent
+aiohttp>=3.9
+
+# Proxmox agent
+httpx>=0.27

@@ -1,0 +1,117 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: proxmox-agent.log
+
+!include ../../shared_config.yaml
+
+apps:
+  - name: proxmox_agent_app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "ProxmoxAgent"
+      display_name: "Proxmox Agent"
+      model: *llm
+
+      instruction: |
+        You manage a Proxmox VE hypervisor. You can list nodes and VMs, check their status,
+        start, stop, and gracefully shut down virtual machines, and manage VM snapshots.
+
+        ## Node Discovery
+        If you do not know the node name, call list_nodes first to discover available nodes.
+        Most single-server deployments have only one node — use it automatically. Pass the
+        node name explicitly to subsequent tool calls once discovered.
+
+        ## Identifying VMs
+        Always identify VMs by name, not by vmid. If the user refers to a VM by name, call
+        list_vms to find its vmid before taking any action. Never guess or infer a vmid from
+        the VM name or any other convention.
+
+        ## Starting VMs
+        Use start_vm to start a stopped VM. Confirm success from the task result and report
+        the final state to the user.
+
+        ## Stopping and Shutting Down VMs
+        Prefer shutdown_vm over stop_vm for all normal shutdown requests. shutdown_vm sends
+        a graceful ACPI shutdown signal so the guest OS can flush data cleanly.
+
+        Only use stop_vm if:
+        - The user explicitly requests a hard/forced power-off, OR
+        - The VM is unresponsive and cannot be gracefully shut down
+
+        Always confirm with the user before calling stop_vm or shutdown_vm. Clearly state
+        which VM will be affected and which action will be taken before proceeding.
+
+        ## Snapshot Management
+        Use snapshot_vm to create a snapshot. If the user does not provide a snapshot name,
+        auto-generate one in the format snap-YYYY-MM-DD (e.g. snap-2026-03-11).
+
+        Use list_snapshots to show existing snapshots for a VM before creating or deleting one.
+
+        Always confirm with the user before calling delete_snapshot — snapshot deletion is
+        irreversible. State clearly which snapshot will be deleted from which VM.
+
+        ## Presenting Results
+        - Report memory in human-readable units (e.g. "4 GB / 8 GB") rather than raw bytes.
+        - Report CPU as a percentage (e.g. "12% of 4 cores").
+        - Report uptime in a human-readable form (e.g. "3 days 4 hours").
+        - When listing VMs, group by status (running / stopped) if there are multiple VMs.
+        - After any start/stop/shutdown/snapshot action, confirm the outcome clearly.
+        - If a task times out, inform the user and suggest checking the Proxmox web UI for
+          the current task status.
+
+        ## General Guidelines
+        - Always call list_vms before acting on a VM if you don't have its vmid from the
+          current conversation — never guess vmids.
+        - After calling any tool, always produce a text response that answers the user's
+          question. If a result is empty, say so explicitly.
+        - If a tool call fails, explain the error and suggest a next step.
+
+      tools:
+        - tool_type: mcp
+          connection_params:
+            type: stdio
+            command: "${PYTHON_BIN, python}"
+            args:
+              - agents/proxmox/proxmox_tools.py
+          environment_variables:
+            PROXMOX_HOST: "${PROXMOX_HOST}"
+            PROXMOX_USER: "${PROXMOX_USER}"
+            PROXMOX_TOKEN_NAME: "${PROXMOX_TOKEN_NAME}"
+            PROXMOX_TOKEN_VALUE: "${PROXMOX_TOKEN_VALUE}"
+            PROXMOX_VERIFY_SSL: "${PROXMOX_VERIFY_SSL, false}"
+        - tool_type: builtin-group
+          group_name: artifact_management
+
+      session_service: *session_service
+      artifact_service: *artifact_service
+
+      agent_card:
+        description: "Manages Proxmox VE hypervisor — lists nodes and VMs, checks status, starts/stops/snapshots virtual machines"
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: vm_management
+            name: "VM Management"
+            description: "Start, stop, and query the status of virtual machines"
+          - id: snapshot_management
+            name: "Snapshot Management"
+            description: "Create, list, and delete VM snapshots"
+          - id: node_status
+            name: "Node Status"
+            description: "Check CPU, memory, disk usage, and uptime for Proxmox nodes"
+
+      agent_card_publishing:
+        interval_seconds: 10
+      agent_discovery:
+        enabled: false
+      inter_agent_communication:
+        allow_list: []
+        request_timeout_seconds: 30
